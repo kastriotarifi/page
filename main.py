@@ -6,15 +6,25 @@ import time
 
 visited_urls = set()
 
-# Function to extract all the links from a page
-def get_all_links(url):
-    """ Get all the links on the page """
+# Function to extract all the links and other metadata from a page
+def get_page_data(url):
+    """ Extract all links, title, and meta description from the page """
     try:
         response = requests.get(url)
         response.raise_for_status()  # Raise an error for bad responses (4xx, 5xx)
 
         # Parse the HTML content of the page
         soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Extract page title
+        title = soup.title.string if soup.title else 'No Title Found'
+
+        # Extract meta description
+        meta_desc = None
+        if soup.find("meta", {"name": "description"}):
+            meta_desc = soup.find("meta", {"name": "description"}).get("content")
+        elif soup.find("meta", {"property": "og:description"}):
+            meta_desc = soup.find("meta", {"property": "og:description"}).get("content")
 
         links = set()
         for anchor in soup.find_all('a', href=True):
@@ -26,17 +36,23 @@ def get_all_links(url):
             # Only add the URL if it is on the same domain
             if urlparse(full_url).netloc == urlparse(url).netloc:
                 links.add(full_url)
-        return links
+
+        return {
+            "url": url,
+            "title": title,
+            "meta_description": meta_desc,
+            "links": links
+        }
 
     except requests.RequestException as e:
         st.error(f"Error fetching the URL: {e}")
-        return []
+        return None
 
-# Function to crawl the website and collect pages
+# Function to crawl the website and collect pages with more data
 def crawl_website(start_url, max_depth=3):
-    """ Recursively crawl the website up to a certain depth """
+    """ Recursively crawl the website up to a certain depth, collecting links and metadata """
     urls_to_visit = {start_url}
-    all_links = set()
+    all_data = []
 
     while urls_to_visit:
         url = urls_to_visit.pop()
@@ -44,17 +60,20 @@ def crawl_website(start_url, max_depth=3):
         if url not in visited_urls:
             visited_urls.add(url)
             st.write(f"Visiting: {url}")
-            links = get_all_links(url)
-            all_links.update(links)
+            page_data = get_page_data(url)
 
-            # Add the links to the stack if we haven't visited them yet
-            for link in links:
-                if link not in visited_urls:
-                    urls_to_visit.add(link)
+            if page_data:
+                # Add page data (title, description, links)
+                all_data.append(page_data)
+
+                # Add the links to the stack if we haven't visited them yet
+                for link in page_data['links']:
+                    if link not in visited_urls:
+                        urls_to_visit.add(link)
 
         time.sleep(1)  # Be polite to the server (add a small delay between requests)
 
-    return all_links
+    return all_data
 
 # Streamlit UI
 st.title("Website Page Crawler")
@@ -64,11 +83,17 @@ url = st.text_input("Enter the website URL to crawl", "")
 
 if url:
     st.write(f"Crawling the website: {url}... Please wait.")
-    pages = crawl_website(url)
+    data = crawl_website(url)
 
-    if pages:
-        st.write("Found the following pages:")
-        for page in pages:
-            st.write(page)
+    if data:
+        st.write("Found the following pages and their metadata:")
+        for page in data:
+            st.write(f"URL: {page['url']}")
+            st.write(f"Title: {page['title']}")
+            st.write(f"Meta Description: {page['meta_description'] if page['meta_description'] else 'No meta description found'}")
+            st.write(f"Links found on this page:")
+            for link in page['links']:
+                st.write(link)
+            st.write("---")
     else:
         st.write("No pages found or there was an error during crawling.")
